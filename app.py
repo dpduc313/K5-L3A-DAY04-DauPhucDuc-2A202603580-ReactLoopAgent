@@ -1,7 +1,7 @@
 """UI demo cho status agent: hỏi agent hoặc xem lại một case trong file eval, kèm trace từng step.
 
-Chạy (đặt PROVIDER, MODEL, API key như khi chạy run.py):
-  streamlit run app.py
+Chạy (PROVIDER, MODEL, API key lấy từ shell, thiếu thì đọc từ .env):
+  python -m streamlit run app.py
 """
 import json
 import os
@@ -15,6 +15,21 @@ from providers import Provider
 from status_tools import StatusTools
 
 ROOT = Path(__file__).resolve().parent
+
+
+def load_dotenv(path=ROOT / '.env'):
+    """Nạp các dòng `export KEY=VALUE` / `KEY=VALUE` trong .env; biến đã có trong shell được giữ nguyên."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.removeprefix('export ').split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"\''))
+
+
+load_dotenv()
 BONUS_SCENARIOS = ['normal', 'rate_limit_once', 'rate_limit_always', 'format_once', 'noisy', 'injection']
 STATUS_ICON = {'completed': ':material/check_circle:', 'max_steps': ':material/hourglass_bottom:', 'error': ':material/error:'}
 
