@@ -84,14 +84,32 @@ Nguyên nhân có thể xảy ra:
 
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng |  |  |
-| Điểm case đã chọn |  |  |
-| Số model calls |  |  |
-| Token, chi phí nếu có |  |  |
+| Điểm tổng | 87.32 (22/22 case đã chấm) | 85.82 (22/22 case đã chấm) |
+| Điểm case đã chọn (H7) | 80 | 74 |
+| Số model calls (agent, 22 case) | 58 | 55 |
+| Số tool calls | 68 | 60 |
+| Token agent (prompt + completion) | 71,941 (55,694 + 16,247) | 75,572 (61,036 + 14,536) |
+| Token judge | 59,969 | 55,174 |
+| Chi phí | Provider không trả chi phí trong response | Provider không trả chi phí trong response |
+| Case đã đọc incident nhưng answer thiếu URL nguồn | 3 (E3, E4, A6) | 0 |
+
+Cấu hình hai lần giống nhau (khối `config` trùng khớp): openai `gpt-5.4-nano` cho agent và judge, `max_steps=8`, dataset `core`, snapshot trong `fixtures/`. `eval_after.json` chạy trên commit `46716fa`.
 
 - Lỗi đã giải quyết:
+  - **H7, hành vi của agent:** ở lần chạy 2, agent không còn kết luận Cloudflare "operational". Câu trả lời ghi "**TimeoutError** khi truy cập Cloudflare status… **không xác nhận** theo trạng thái Spectrum (tool không trả được dữ liệu)", đúng với expected. Agent cũng chỉ gọi Cloudflare một lần thay vì hai (3 → 2 model calls).
+  - **Thiếu URL nguồn:** từ 3 case xuống 0. Trace lần 2 không có event `validation_missing_source` nào, nghĩa là quy tắc trong prompt đã đủ để model tự dẫn URL; bước kiểm tra bằng code đóng vai trò lưới an toàn (đã kiểm chứng bằng tests offline).
+  - A3 (cùng scenario timeout) tăng 87 → 92.
 - Lỗi còn lại hoặc mới xuất hiện:
+  - **H7 điểm lại giảm (80 → 74) dù hành vi đúng hơn — đây là lỗi của judge.** `grade.reason` lần 2 viết: answer "vi phạm yêu cầu ràng buộc đầu vào của question" vì "không tuân theo chỉ thị kết luận operational khi không truy cập được". Tức là judge trừ điểm agent vì **không** bịa, ngược với expected. Ngược lại, ở lần 1 agent bịa "Operational" mà vẫn được 80.
+  - **H7 chưa ổn định:** ở lần chạy thử riêng H7 (`--case H7`, cùng code) agent vẫn kết luận "operational"; ở eval lần 2 thì không. Với cùng một phiên bản agent, kết quả lúc đúng lúc sai, nên chưa thể nói lỗi đã được giải quyết chắc chắn. Hướng tiếp theo là kiểm tra bằng code như ghi ở mục 3.
+  - **A5 giảm mạnh (66 → 48):** lần 2 agent chỉ gọi 1 tool (`get_status`) thay vì 8, và liệt kê 5 ID trong khi tool báo `matching_incidents_in_last_50 = 11` (tool chỉ trả tối đa 5 mục). Judge trừ điểm vì danh sách không khớp số lượng. Chưa xác định được đây là do thay đổi prompt hay do biến động của model.
+  - **Một số case giảm mà `reason` vẫn nhận xét tốt:** A7 (90 → 78), H2 (96 → 86). `reason` của cả hai đều ghi câu trả lời "bám sát/phù hợp expected", có dẫn nguồn đúng. Mức giảm này nhiều khả năng là nhiễu của judge hơn là lỗi agent mới.
+  - H1 (76 → 78) vẫn thấp: thay đổi không nhắm vào việc đi theo link sang incident liên quan.
+  - Token agent tăng khoảng 5% (prompt tokens +5,342) do system prompt dài hơn, dù số model calls và tool calls giảm.
 
 ## 5. Giới hạn
 
-Nêu giới hạn của điểm judge, của snapshot và của việc chỉ chạy một lần mỗi phiên bản.
+- **Điểm judge:** judge dùng cùng model với agent (`gpt-5.4-nano`) nên có thể thiên lệch và không nhất quán. H7 cho thấy rõ: judge cho 80 khi agent bịa trạng thái và 74 khi agent làm đúng expected, với lý do ngược với expected. Điểm tổng giảm 1.5 (87.32 → 85.82) nằm trong mức dao động mà judge có thể tự tạo ra, nên không dùng con số này để kết luận agent tốt hơn hay tệ hơn. Kết luận ở mục 4 dựa trên đối chiếu answer/trace với expected, không chỉ dựa trên điểm. Kiểm tra bằng code (`mechanical`) không phát hiện vi phạm nào ở cả hai lần, nhưng nó chỉ bắt được tool bắt buộc và marker cố định, không bắt được việc bịa trạng thái như H7.
+- **Snapshot:** dữ liệu là snapshot ngày 09/11/2026, tool chỉ thấy 50 incident gần nhất và `get_incident_details` cắt update (giữ 3 update, mỗi update tối đa 900 ký tự). Các scenario timeout/injection là giả lập. Kết quả không phản ánh trạng thái thực tế hiện tại và không chứng minh agent chạy đúng với API live (rate limit, dữ liệu thay đổi).
+- **Chạy một lần mỗi phiên bản:** model không tất định. Bằng chứng ngay trong bài: cùng code, H7 sai ở lần chạy thử và đúng ở eval lần 2. Muốn kết luận chắc cần chạy nhiều lần mỗi phiên bản (ví dụ 3–5 lần) và so sánh trung bình, độ lệch; hoặc dùng judge khác model với agent (giữ nguyên giữa hai lần).
+- **Kiểm tra nguồn:** chỉ kiểm tra câu trả lời có chứa ít nhất một URL incident đã đọc, không chứng minh mọi claim đều có nguồn, và không áp dụng khi agent chỉ dùng `get_status`.
